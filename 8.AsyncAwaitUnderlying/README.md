@@ -16,7 +16,7 @@ async Task<int> Foo(Process p)
   
   if (started)
   {
-    await p.WaitForExit();
+    await p.WaitForExitAsync();
     
     return p.ExitCode;
   }
