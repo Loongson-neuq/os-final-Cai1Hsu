@@ -19,6 +19,8 @@ class TaskFoo : Task<int>
             case State.NotStarted:
                 // 假设 StartAsync 只需要可以立即返回
                 // 但是实际上，StartAsync 是像本方法一样的状态机
+                // 你需要持续调用 StartAsync 状态机的 Run 方法，Complete 属性为 true 时，获取返回值
+                // 然后你才能进行下面的 if 判断
                 started = p.StartAsync().GetAwaiter().GetResult();
                 
                 if (!started)
@@ -27,6 +29,7 @@ class TaskFoo : Task<int>
                     _state = State.RunState1;
                 break;
             case RunState1:
+                // 同上，这里简化了模型
                 p.WaitForExitAsync().Wait();
                 _state = State.RunState2;
                 break;
