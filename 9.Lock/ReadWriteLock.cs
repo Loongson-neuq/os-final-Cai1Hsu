@@ -63,21 +63,8 @@ class ReadWriteLock
     {
         while (true)
         {
-            if (Volatile.Read(ref writeRC) is 0)
-            {
-                Interlocked.Increment(ref readRC);
-
-                // Someone acquired the write lock when we adding read lock reference counter
-                // We should give it up.
-                if (Volatile.Read(ref writeRC) is not 0)
-                {
-                    Interlocked.Decrement(ref readRC);
-                }
-                else
-                {
-                    return new ReadPart(this);
-                }
-            }
+            if (TryAcquireReadLock(out var readPart))
+                return readPart;
 
             if (blockIfUnavaliable)
                 await Task.Yield();
@@ -90,22 +77,8 @@ class ReadWriteLock
     {
         while (true)
         {
-            if (Volatile.Read(ref readRC) is 0
-                && Volatile.Read(ref writeRC) is 0)
-            {
-                Interlocked.Increment(ref writeRC);
-
-                // Another callsite acquired the write lock or a read lock when we acquire write lock
-                // We should give it up.
-                if (Volatile.Read(ref readRC) != 0 || Volatile.Read(ref writeRC) > 1)
-                {
-                    Interlocked.Decrement(ref writeRC);
-                }
-                else
-                {
-                    return new WritePart(this);
-                }
-            }
+            if (TryAcquireWriteLock(out var writePart))
+                return writePart;
 
             if (blockIfUnavaliable)
                 await Task.Yield();
