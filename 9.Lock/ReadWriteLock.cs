@@ -1,71 +1,126 @@
-using System.Threading;
+#pragma warning disable CS0420
 
-// A simple read/write lock for singlethreaded async concurrent scenario
-// OS level atomic variable is needed for for multithread scenario
+using System.Diagnostics;
+
+// A simple read/write lock implementation
 class ReadWriteLock
 {
-    private volatile nuint readRC = default;
+    private volatile uint readRC = 0;
 
-    private volatile bool writeAquired = default;
+    private volatile uint writeRC = 0;
 
-    public bool AquireReadLock(bool blockIfUnavaliable = false)
+    public async Task<ReadPart?> AcquireReadLock(bool blockIfUnavaliable = false)
     {
-        switch ((writeAquired, blockIfUnavaliable))
+        while (true)
         {
-            case (false, _):
-                readRC++;
-                return true;
-            
-            case (true, false):
-                return false;
+            if (Volatile.Read(ref writeRC) is 0)
+            {
+                Interlocked.Increment(ref readRC);
 
-            case (true, true):
-                while (writeAquired)
+                // Someone acquired the write lock when we adding read lock reference counter
+                // We should give it up.
+                if (Volatile.Read(ref writeRC) is not 0)
                 {
-                    // Yield CPU time to the OS
-                    Yield();
+                    Interlocked.Decrement(ref readRC);
                 }
-                readRC++;
-                return true;
-        }
-    }
-
-    public bool AquireWriteLock(bool blockIfUnavaliable = false)
-    {
-        switch ((readRC == 0, blockIfUnavaliable))
-        {
-            case (true, _):
-                writeAquired = true;
-                return true;
-
-            case (false, false):
-                return false;
-
-            case (false, true):
-                while (writeAquired)
+                else
                 {
-                    // Yield CPU to the OS
-                    Yield();
+                    return new ReadPart(this);
                 }
-                writeAquired = true;
-                return true;
+            }
+
+            if (blockIfUnavaliable)
+                await Task.Yield();
+            else
+                return null;
         }
     }
 
-    public void ReleaseReadLock()
+    public async Task<WritePart?> AcquireWriteLock(bool blockIfUnavaliable = false)
     {
-        Debug.Assert(!writeAquired);
-        readRC--;
-
-        if (readRC < 0)
+        while (true)
         {
-            throw new Exception("Read lock reference counter is negative! Please check the callsite");
+            if (Volatile.Read(ref readRC) is 0
+                && Volatile.Read(ref writeRC) is 0)
+            {
+                Interlocked.Increment(ref writeRC);
+
+                // Another callsite acquired the write lock or a read lock when we acquire write lock
+                // We should give it up.
+                if (Volatile.Read(ref readRC) != 0 || Volatile.Read(ref writeRC) > 1)
+                {
+                    Interlocked.Decrement(ref writeRC);
+                }
+                else
+                {
+                    return new WritePart(this);
+                }
+            }
+
+            if (blockIfUnavaliable)
+                await Task.Yield();
+            else
+                return null;
         }
     }
 
-    public void ReleaseWriteLock()
+    private void ReleaseReadLock()
     {
-        Debug.Assert(readRC == 0);
-        writeAquired = false;
+        Debug.Assert(Volatile.Read(ref writeRC) is 0);
+
+        Interlocked.Decrement(ref readRC);
+    }
+
+    private void ReleaseWriteLock()
+    {
+        Debug.Assert(Volatile.Read(ref readRC) is 0);
+
+        Interlocked.Decrement(ref writeRC);
+
+        Debug.Assert(Volatile.Read(ref writeRC) is 0);
+    }
+
+    public struct ReadPart : IDisposable
+    {
+        private readonly ReadWriteLock _base = null!;
+        private bool disposed = false;
+
+        internal ReadPart(ReadWriteLock @base) => _base = @base;
+
+        public void Dispose() => ReleaseInternal();
+
+        public void Release()
+            => ReleaseInternal();
+
+        private void ReleaseInternal()
+        {
+            if (disposed)
+                return;
+
+            disposed = true;
+            _base.ReleaseReadLock();
+        }
+    }
+
+    public struct WritePart : IDisposable
+    {
+        private readonly ReadWriteLock _base = null!;
+        private bool disposed = false;
+
+        internal WritePart(ReadWriteLock @base) => _base = @base;
+
+        public void Dispose() => ReleaseInternal();
+
+        public void Release()
+            => ReleaseInternal();
+
+        private void ReleaseInternal()
+        {
+            if (disposed)
+                return;
+
+            disposed = true;
+            _base.ReleaseWriteLock();
+        }
     }
 }
